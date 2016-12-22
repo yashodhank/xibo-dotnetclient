@@ -1,6 +1,6 @@
 /*
  * Xibo - Digitial Signage - http://www.xibo.org.uk
- * Copyright (C) 2006-15 Daniel Garner
+ * Copyright (C) 2006-16 Daniel Garner
  *
  * This file is part of Xibo.
  *
@@ -37,19 +37,34 @@ using System.Threading;
 using XiboClient.Properties;
 using System.Runtime.InteropServices;
 using System.Globalization;
-using Xilium.CefGlue;
 using XiboClient.Logic;
+using XiboClient.Control;
+using XiboClient.Error;
 
 namespace XiboClient
 {
     public partial class MainForm : Form
     {
+        /// <summary>
+        /// Schedule Class
+        /// </summary>
         private Schedule _schedule;
+
+        /// <summary>
+        /// Regions
+        /// </summary>
         private Collection<Region> _regions;
+
+        /// <summary>
+        /// Overlay Regions
+        /// </summary>
+        private Collection<Region> _overlays;
+
         private bool _changingLayout = false;
         private int _scheduleId;
         private int _layoutId;
         private bool _screenSaver = false;
+        private bool _showingSplash = false;
 
         double _layoutWidth;
         double _layoutHeight;
@@ -63,6 +78,12 @@ namespace XiboClient
         private ClientInfo _clientInfoForm;
 
         private delegate void ChangeToNextLayoutDelegate(string layoutPath);
+        private delegate void ManageOverlaysDelegate(Collection<ScheduleItem> overlays);
+
+        /// <summary>
+        /// Border style - usually none, but useful for debugging.
+        /// </summary>
+        private BorderStyle _borderStyle = BorderStyle.None;
 
         [FlagsAttribute]
         enum EXECUTION_STATE : uint
@@ -114,8 +135,8 @@ namespace XiboClient
             ApplicationSettings.Default.OffsetX = 0;
             ApplicationSettings.Default.OffsetY = 0;
 
-            InitializeXibo();
             InitializeScreenSaver(true);
+            InitializeXibo();
         }
 
         public MainForm(bool screenSaver)
@@ -137,6 +158,13 @@ namespace XiboClient
         private void InitializeXibo()
         {
             Thread.CurrentThread.Name = "UI Thread";
+
+            // Check the directories exist
+            if (!Directory.Exists(ApplicationSettings.Default.LibraryPath) || !Directory.Exists(ApplicationSettings.Default.LibraryPath + @"\backgrounds\"))
+            {
+                // Will handle the create of everything here
+                Directory.CreateDirectory(ApplicationSettings.Default.LibraryPath + @"\backgrounds");
+            }
 
             // Default the XmdsConnection
             ApplicationSettings.Default.XmdsLastConnection = DateTime.MinValue;
@@ -200,6 +228,27 @@ namespace XiboClient
                 TextWriterTraceListener listener = new TextWriterTraceListener(ApplicationSettings.Default.LogToDiskLocation);
                 Trace.Listeners.Add(listener);
             }
+
+#if !DEBUG
+            // Initialise the watchdog
+            if (!_screenSaver)
+            {
+                try
+                {
+                    // Update/write the status.json file
+                    File.WriteAllText(Path.Combine(ApplicationSettings.Default.LibraryPath, "status.json"), "{\"lastActivity\":\"" + DateTime.Now.ToString() + "\"}");
+
+                    // Start watchdog
+                    WatchDogManager.Start();
+                }
+                catch (Exception e)
+                {
+                    Trace.WriteLine(new LogMessage("MainForm - InitializeXibo", "Cannot start watchdog. E = " + e.Message), LogType.Error.ToString());
+                }
+            }
+#endif
+            // An empty set of overlay regions
+            _overlays = new Collection<Region>();
             
             Trace.WriteLine(new LogMessage("MainForm", "Client Initialised"), LogType.Info.ToString());
         }
@@ -233,9 +282,19 @@ namespace XiboClient
             {
                 // Toggle
                 if (_clientInfoForm.Visible)
+                {
                     _clientInfoForm.Hide();
+#if !DEBUG
+                    if (!_screenSaver)
+                        TopMost = true;
+#endif
+                }
                 else
                 {
+#if !DEBUG
+                    if (!_screenSaver)
+                        TopMost = false;
+#endif
                     _clientInfoForm.Show();
                     _clientInfoForm.BringToFront();
                 }
@@ -266,15 +325,24 @@ namespace XiboClient
                 _schedule = new Schedule(ApplicationSettings.Default.LibraryPath + @"\" + ApplicationSettings.Default.ScheduleFile, ref _cacheManager, ref _clientInfoForm);
 
                 // Bind to the schedule change event - notifys of changes to the schedule
-                _schedule.ScheduleChangeEvent += new Schedule.ScheduleChangeDelegate(schedule_ScheduleChangeEvent);
+                _schedule.ScheduleChangeEvent += ScheduleChangeEvent;
+
+                // Bind to the overlay change event
+                _schedule.OverlayChangeEvent += ScheduleOverlayChangeEvent;
 
                 // Initialize the other schedule components
                 _schedule.InitializeComponents();
+
+                // Set this form to topmost
+#if !DEBUG
+                if (!_screenSaver)
+                    TopMost = true;
+#endif
             }
             catch (Exception ex)
             {
                 Debug.WriteLine(ex.Message, LogType.Error.ToString());
-                MessageBox.Show("Fatal Error initialising the application", "Fatal Error");
+                MessageBox.Show("Fatal Error initialising the application. " + ex.Message, "Fatal Error");
                 Close();
                 Dispose();
             }
@@ -287,13 +355,6 @@ namespace XiboClient
         /// <param name="e"></param>
         private void MainForm_Load(object sender, EventArgs e)
         {
-            // Check the directories exist
-            if (!Directory.Exists(ApplicationSettings.Default.LibraryPath) || !Directory.Exists(ApplicationSettings.Default.LibraryPath + @"\backgrounds\"))
-            {
-                // Will handle the create of everything here
-                Directory.CreateDirectory(ApplicationSettings.Default.LibraryPath + @"\backgrounds");
-            }
-
             // Is the mouse enabled?
             if (!ApplicationSettings.Default.EnableMouse)
                 // Hide the cursor
@@ -386,7 +447,7 @@ namespace XiboClient
         /// Handles the ScheduleChange event
         /// </summary>
         /// <param name="layoutPath"></param>
-        void schedule_ScheduleChangeEvent(string layoutPath, int scheduleId, int layoutId)
+        void ScheduleChangeEvent(string layoutPath, int scheduleId, int layoutId)
         {
             Trace.WriteLine(new LogMessage("MainForm - ScheduleChangeEvent", string.Format("Schedule Changing to {0}", layoutPath)), LogType.Audit.ToString());
 
@@ -419,13 +480,16 @@ namespace XiboClient
         /// </summary>
         private void ChangeToNextLayout(string layoutPath)
         {
-            try
+            if (ApplicationSettings.Default.PreventSleep)
             {
-                SetThreadExecutionState(EXECUTION_STATE.ES_DISPLAY_REQUIRED | EXECUTION_STATE.ES_SYSTEM_REQUIRED | EXECUTION_STATE.ES_CONTINUOUS);
-            }
-            catch
-            {
-                Trace.WriteLine(new LogMessage("MainForm - ChangeToNextLayout", "Unable to set Thread Execution state"), LogType.Info.ToString());
+                try
+                {
+                    SetThreadExecutionState(EXECUTION_STATE.ES_DISPLAY_REQUIRED | EXECUTION_STATE.ES_SYSTEM_REQUIRED | EXECUTION_STATE.ES_CONTINUOUS);
+                }
+                catch
+                {
+                    Trace.WriteLine(new LogMessage("MainForm - ChangeToNextLayout", "Unable to set Thread Execution state"), LogType.Info.ToString());
+                }
             }
 
             try
@@ -444,7 +508,7 @@ namespace XiboClient
                         Controls.Remove(control);
                     }
 
-                    Trace.WriteLine(new LogMessage("MainForm - ChangeToNextLayout", "Destroy Layout Failed. Exception raised was: " + e.Message), LogType.Error.ToString());
+                    Trace.WriteLine(new LogMessage("MainForm - ChangeToNextLayout", "Destroy Layout Failed. Exception raised was: " + e.Message), LogType.Info.ToString());
                     throw e;
                 }
 
@@ -452,15 +516,22 @@ namespace XiboClient
                 try
                 {
                     PrepareLayout(layoutPath);
-                    _clientInfoForm.CurrentLayoutId = layoutPath;
 
+                    _clientInfoForm.CurrentLayoutId = layoutPath;
+                    _schedule.CurrentLayoutId = _layoutId;
+                }
+                catch (DefaultLayoutException)
+                {
+                    throw;
                 }
                 catch (Exception e)
                 {
                     DestroyLayout();
-                    Trace.WriteLine(new LogMessage("MainForm - ChangeToNextLayout", "Prepare Layout Failed. Exception raised was: " + e.Message), LogType.Error.ToString());
-                    throw e;
+                    Trace.WriteLine(new LogMessage("MainForm - ChangeToNextLayout", "Prepare Layout Failed. Exception raised was: " + e.Message), LogType.Info.ToString());
+                    throw;
                 }
+
+                _clientInfoForm.ControlCount = Controls.Count;
 
                 // Do we need to notify?
                 try
@@ -476,17 +547,19 @@ namespace XiboClient
                 }
                 catch (Exception e)
                 {
-                    Trace.WriteLine(new LogMessage("MainForm - ChangeToNextLayout", "Notify Status Failed. Exception raised was: " + e.Message), LogType.Error.ToString());
-                    throw e;
+                    Trace.WriteLine(new LogMessage("MainForm - ChangeToNextLayout", "Notify Status Failed. Exception raised was: " + e.Message), LogType.Info.ToString());
+                    throw;
                 }
             }
             catch (Exception ex)
             {
-                Trace.WriteLine(new LogMessage("MainForm - ChangeToNextLayout", "Layout Change to " + layoutPath + " failed. Exception raised was: " + ex.Message), LogType.Error.ToString());
-                
-                ShowSplashScreen();
+                if (!(ex is DefaultLayoutException))
+                    Trace.WriteLine(new LogMessage("MainForm - ChangeToNextLayout", "Layout Change to " + layoutPath + " failed. Exception raised was: " + ex.Message), LogType.Error.ToString());
 
-                // In 10 seconds fire the next layout?
+                if (!_showingSplash)
+                    ShowSplashScreen();
+                
+                // In 10 seconds fire the next layout
                 System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
                 timer.Interval = 10000;
                 timer.Tick += new EventHandler(splashScreenTimer_Tick);
@@ -520,13 +593,6 @@ namespace XiboClient
         /// </summary>
         private void PrepareLayout(string layoutPath)
         {
-            // Create a start record for this layout
-            _stat = new Stat();
-            _stat.type = StatType.Layout;
-            _stat.scheduleID = _scheduleId;
-            _stat.layoutID = _layoutId;
-            _stat.fromDate = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-
             // Get this layouts XML
             XmlDocument layoutXml = new XmlDocument();
             DateTime layoutModifiedTime;
@@ -534,13 +600,13 @@ namespace XiboClient
             // Default or not
             if (layoutPath == ApplicationSettings.Default.LibraryPath + @"\Default.xml" || String.IsNullOrEmpty(layoutPath))
             {
-                throw new Exception("Default layout");
+                throw new DefaultLayoutException();
             }
             else
             {
+                // try to open the layout file
                 try
                 {
-                    // try to open the layout file
                     using (FileStream fs = File.Open(layoutPath, FileMode.Open, FileAccess.Read, FileShare.Write))
                     {
                         using (XmlReader reader = XmlReader.Create(fs))
@@ -551,14 +617,15 @@ namespace XiboClient
                         }
                         fs.Close();
                     }
-
-                    layoutModifiedTime = File.GetLastWriteTime(layoutPath);
                 }
-                catch (Exception ex)
+                catch (IOException ioEx) 
                 {
-                    Trace.WriteLine(string.Format("Could not find the layout file {0}: {1}", layoutPath, ex.Message));
+                    _cacheManager.Remove(layoutPath);
+                    Trace.WriteLine(new LogMessage("MainForm - PrepareLayout", "IOException: " + ioEx.ToString()), LogType.Error.ToString());
                     throw;
                 }
+
+                layoutModifiedTime = File.GetLastWriteTime(layoutPath);
             }
 
             // Attributes of the main layout node
@@ -627,7 +694,7 @@ namespace XiboClient
                         GenerateBackgroundImage(layoutAttributes["background"].Value, backgroundWidth, backgroundHeight, bgFilePath);
 
                     BackgroundImage = new Bitmap(bgFilePath);
-                    options.backgroundImage = bgFilePath;
+                    options.backgroundImage = @"/backgrounds/" + backgroundWidth + "x" + backgroundHeight + "_" + layoutAttributes["background"].Value; ;
                 }
                 else
                 {
@@ -677,6 +744,13 @@ namespace XiboClient
                 }
             }
 
+            // Create a start record for this layout
+            _stat = new Stat();
+            _stat.type = StatType.Layout;
+            _stat.scheduleID = _scheduleId;
+            _stat.layoutID = _layoutId;
+            _stat.fromDate = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+
             foreach (XmlNode region in listRegions)
             {
                 // Is there any media
@@ -684,6 +758,20 @@ namespace XiboClient
                 {
                     Debug.WriteLine("A region with no media detected");
                     continue;
+                }
+
+                // Region loop setting
+                options.RegionLoop = false;
+
+                XmlNode regionOptionsNode = region.SelectSingleNode("options");
+
+                if (regionOptionsNode != null)
+                {
+                    foreach (XmlNode option in regionOptionsNode.ChildNodes)
+                    {
+                        if (option.Name == "loop" && option.InnerText == "1")
+                            options.RegionLoop = true;
+                    }
                 }
 
                 //each region
@@ -715,6 +803,7 @@ namespace XiboClient
 
                 Region temp = new Region(ref _statLog, ref _cacheManager);
                 temp.DurationElapsedEvent += new Region.DurationElapsedDelegate(temp_DurationElapsedEvent);
+                temp.BorderStyle = _borderStyle;
 
                 Debug.WriteLine("Created new region", "MainForm - Prepare Layout");
 
@@ -727,9 +816,18 @@ namespace XiboClient
                 Debug.WriteLine("Adding region", "MainForm - Prepare Layout");
             }
 
+            // We have loaded a layout and therefore are no longer showing the splash screen
+            _showingSplash = false;
+
             // Null stuff
             listRegions = null;
             listMedia = null;
+
+            // Bring overlays to the front
+            foreach (Region region in _overlays)
+            {
+                region.BringToFront();
+            }
         }
 
         /// <summary>
@@ -763,6 +861,8 @@ namespace XiboClient
         /// </summary>
         private void ShowSplashScreen()
         {
+            _showingSplash = true;
+
             if (!string.IsNullOrEmpty(ApplicationSettings.Default.SplashOverride))
             {
                 try
@@ -952,6 +1052,200 @@ namespace XiboClient
             catch
             {
                 System.Diagnostics.Trace.WriteLine(new LogMessage("MainForm - FlushStats", "Unable to Flush Stats"), LogType.Error.ToString());
+            }
+        }
+
+        /// <summary>
+        /// Overlay change event.
+        /// </summary>
+        /// <param name="overlays"></param>
+        void ScheduleOverlayChangeEvent(Collection<ScheduleItem> overlays)
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(new ManageOverlaysDelegate(ManageOverlays), overlays);
+                return;
+            }
+
+            ManageOverlays(overlays);
+        }
+
+        /// <summary>
+        /// Manage Overlays
+        /// </summary>
+        /// <param name="overlays"></param>
+        public void ManageOverlays(Collection<ScheduleItem> overlays)
+        {
+            try
+            {
+                // Parse all overlays and compare what we have now to the overlays we have already created (see OverlayRegions)
+
+                // Take the ones we currently have up and remove them if they aren't in the new list
+                // We use a for loop so that we are able to remove the region from the collection
+                for (int i = 0; i < _overlays.Count; i++)
+                {
+                    Region region = _overlays[i];
+                    bool found = false;
+
+                    foreach (ScheduleItem item in overlays)
+                    {
+                        if (item.scheduleid == region.scheduleId && _cacheManager.GetMD5(item.id + ".xlf") == region.hash)
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found)
+                    {
+                        Debug.WriteLine("Removing overlay which is no-longer required. Overlay: " + region.scheduleId, "Overlays");
+                        region.Clear();
+                        region.Dispose();
+                        Controls.Remove(region);
+                        _overlays.Remove(region);
+                    }
+                }
+
+                // Take the ones that are in the new list and add them
+                foreach (ScheduleItem item in overlays)
+                {
+                    // Check its not already added.
+                    bool found = false;
+                    foreach (Region region in _overlays)
+                    {
+                        if (region.scheduleId == item.scheduleid)
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (found)
+                        continue;
+
+                    // Parse the layout for regions, and create them.
+                    string layoutPath = item.layoutFile;
+
+                    // Get this layouts XML
+                    XmlDocument layoutXml = new XmlDocument();
+
+                    try
+                    {
+                        // try to open the layout file
+                        using (FileStream fs = File.Open(layoutPath, FileMode.Open, FileAccess.Read, FileShare.Write))
+                        {
+                            using (XmlReader reader = XmlReader.Create(fs))
+                            {
+                                layoutXml.Load(reader);
+
+                                reader.Close();
+                            }
+                            fs.Close();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Trace.WriteLine(new LogMessage("MainForm - _schedule_OverlayChangeEvent", string.Format("Could not find the layout file {0}: {1}", layoutPath, ex.Message)), LogType.Info.ToString());
+                        continue;
+                    }
+
+                    // Attributes of the main layout node
+                    XmlNode layoutNode = layoutXml.SelectSingleNode("/layout");
+
+                    XmlAttributeCollection layoutAttributes = layoutNode.Attributes;
+
+                    // Set the background and size of the form
+                    double layoutWidth = int.Parse(layoutAttributes["width"].Value, CultureInfo.InvariantCulture);
+                    double layoutHeight = int.Parse(layoutAttributes["height"].Value, CultureInfo.InvariantCulture);
+
+                    // Scaling factor, will be applied to all regions
+                    double scaleFactor = Math.Min(_clientSize.Width / layoutWidth, _clientSize.Height / layoutHeight);
+
+                    // Want to be able to center this shiv - therefore work out which one of these is going to have left overs
+                    int backgroundWidth = (int)(layoutWidth * scaleFactor);
+                    int backgroundHeight = (int)(layoutHeight * scaleFactor);
+
+                    double leftOverX;
+                    double leftOverY;
+
+                    try
+                    {
+                        leftOverX = Math.Abs(_clientSize.Width - backgroundWidth);
+                        leftOverY = Math.Abs(_clientSize.Height - backgroundHeight);
+
+                        if (leftOverX != 0) leftOverX = leftOverX / 2;
+                        if (leftOverY != 0) leftOverY = leftOverY / 2;
+                    }
+                    catch
+                    {
+                        leftOverX = 0;
+                        leftOverY = 0;
+                    }
+
+                    // New region and region options objects
+                    RegionOptions options = new RegionOptions();
+
+                    // Get the regions
+                    XmlNodeList listRegions = layoutXml.SelectNodes("/layout/region");
+
+                    foreach (XmlNode region in listRegions)
+                    {
+                        // Is there any media
+                        if (region.ChildNodes.Count == 0)
+                        {
+                            Debug.WriteLine("A region with no media detected");
+                            continue;
+                        }
+
+                        //each region
+                        XmlAttributeCollection nodeAttibutes = region.Attributes;
+
+                        options.scheduleId = item.scheduleid;
+                        options.layoutId = item.id;
+                        options.regionId = nodeAttibutes["id"].Value.ToString();
+                        options.width = (int)(Convert.ToDouble(nodeAttibutes["width"].Value, CultureInfo.InvariantCulture) * scaleFactor);
+                        options.height = (int)(Convert.ToDouble(nodeAttibutes["height"].Value, CultureInfo.InvariantCulture) * scaleFactor);
+                        options.left = (int)(Convert.ToDouble(nodeAttibutes["left"].Value, CultureInfo.InvariantCulture) * scaleFactor);
+                        options.top = (int)(Convert.ToDouble(nodeAttibutes["top"].Value, CultureInfo.InvariantCulture) * scaleFactor);
+                        options.scaleFactor = scaleFactor;
+
+                        // Store the original width and original height for scaling
+                        options.originalWidth = (int)Convert.ToDouble(nodeAttibutes["width"].Value, CultureInfo.InvariantCulture);
+                        options.originalHeight = (int)Convert.ToDouble(nodeAttibutes["height"].Value, CultureInfo.InvariantCulture);
+
+                        // Set the backgrounds (used for Web content offsets)
+                        options.backgroundLeft = options.left * -1;
+                        options.backgroundTop = options.top * -1;
+
+                        // Account for scaling
+                        options.left = options.left + (int)leftOverX;
+                        options.top = options.top + (int)leftOverY;
+
+                        // All the media nodes for this region / layout combination
+                        options.mediaNodes = region.SelectNodes("media");
+
+                        Region temp = new Region(ref _statLog, ref _cacheManager);
+                        temp.scheduleId = item.scheduleid;
+                        temp.hash = _cacheManager.GetMD5(item.id + ".xlf");
+                        temp.BorderStyle = _borderStyle;
+
+                        // Dont be fooled, this innocent little statement kicks everything off
+                        temp.regionOptions = options;
+
+                        _overlays.Add(temp);
+                        Controls.Add(temp);
+                        temp.BringToFront();
+                    }
+
+                    // Null stuff
+                    listRegions = null;
+                }
+
+                _clientInfoForm.ControlCount = Controls.Count;
+            }
+            catch (Exception e)
+            {
+                Trace.WriteLine(new LogMessage("MainForm - _schedule_OverlayChangeEvent", "Unknown issue managing overlays. Ex = " + e.Message), LogType.Info.ToString());
             }
         }
     }

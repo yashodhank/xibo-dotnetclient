@@ -119,7 +119,6 @@ namespace XiboClient
                 // Fill in some information that we already know
                 if (rf.FileType == "media")
                 {
-                    string[] filePart = attributes["path"].Value.Split('.');
                     rf.Id = int.Parse(attributes["id"].Value);
                     rf.Path = attributes["path"].Value;
                     rf.SaveAs = (attributes["saveAs"] == null || string.IsNullOrEmpty(attributes["saveAs"].Value)) ? rf.Path : attributes["saveAs"].Value;
@@ -129,8 +128,19 @@ namespace XiboClient
                 else if (rf.FileType == "layout")
                 {
                     rf.Id = int.Parse(attributes["id"].Value);
-                    rf.Path = attributes["path"].Value + ".xlf";
-                    rf.SaveAs = rf.Path;
+                    rf.Path = attributes["path"].Value;
+                    rf.Http = (attributes["download"].Value == "http");
+
+                    if (rf.Http)
+                    {
+                        rf.SaveAs = attributes["saveAs"].Value;
+                    }
+                    else
+                    {
+                        rf.Path = rf.Path + ".xlf";
+                        rf.SaveAs = rf.Path;
+                    }
+                    
                     rf.ChunkSize = rf.Size;
                 }
                 else if (rf.FileType == "resource")
@@ -183,7 +193,7 @@ namespace XiboClient
 
                 // This stuff only executes for Layout/Files items
                 rf.Md5 = attributes["md5"].Value;
-                rf.Size = int.Parse(attributes["size"].Value);
+                rf.Size = double.Parse(attributes["size"].Value);
 
                 // Does this file already exist in the RF node? We might receive duplicates.
                 bool found = false;
@@ -298,7 +308,7 @@ namespace XiboClient
             {
                 foreach (RequiredFile rf in RequiredFileList)
                 {
-                    if (rf.Path == path)
+                    if (rf.SaveAs == path)
                         return rf;
                 }
 

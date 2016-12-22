@@ -20,7 +20,7 @@
     <FileUpgradeFlags>
     </FileUpgradeFlags>
     <OldToolsVersion>3.5</OldToolsVersion>
-    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
     <UpgradeBackupLocation>
     </UpgradeBackupLocation>
     <PublishUrl>T:\Development\Version 2\Client\</PublishUrl>
@@ -48,6 +48,7 @@
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+    <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <DebugType>pdbonly</DebugType>
@@ -56,6 +57,7 @@
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+    <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x86' ">
     <DebugSymbols>true</DebugSymbols>
@@ -65,6 +67,7 @@
     <PlatformTarget>x86</PlatformTarget>
     <ErrorReport>prompt</ErrorReport>
     <UseVSHostingProcess>false</UseVSHostingProcess>
+    <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x86' ">
     <OutputPath>bin\x86\Release\</OutputPath>
@@ -73,30 +76,35 @@
     <DebugType>pdbonly</DebugType>
     <PlatformTarget>x86</PlatformTarget>
     <ErrorReport>prompt</ErrorReport>
-    <UseVSHostingProcess>false</UseVSHostingProcess>
+    <UseVSHostingProcess>true</UseVSHostingProcess>
+    <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="AsyncIO">
-      <HintPath>packages\AsyncIO.0.1.18.0\lib\net40\AsyncIO.dll</HintPath>
+    <Reference Include="AsyncIO, Version=0.1.25.0, Culture=neutral, PublicKeyToken=44a94435bd6f33f8, processorArchitecture=MSIL">
+      <HintPath>packages\AsyncIO.0.1.26.0\lib\net40\AsyncIO.dll</HintPath>
+      <Private>True</Private>
     </Reference>
     <Reference Include="AxInterop.WMPLib, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
       <HintPath>wmpdll\AxInterop.WMPLib.dll</HintPath>
       <EmbedInteropTypes>False</EmbedInteropTypes>
     </Reference>
-    <Reference Include="BouncyCastle.Crypto">
-      <HintPath>packages\BouncyCastle.1.7.0\lib\Net40-Client\BouncyCastle.Crypto.dll</HintPath>
+    <Reference Include="BouncyCastle.Crypto, Version=1.8.1.0, Culture=neutral, PublicKeyToken=0e99375e54769942">
+      <HintPath>packages\BouncyCastle.1.8.1\lib\BouncyCastle.Crypto.dll</HintPath>
+      <Private>True</Private>
     </Reference>
     <Reference Include="Interop.WMPLib, Version=1.0.0.0, Culture=neutral, processorArchitecture=x86">
       <SpecificVersion>False</SpecificVersion>
       <EmbedInteropTypes>False</EmbedInteropTypes>
       <HintPath>wmpdll\Interop.WMPLib.dll</HintPath>
     </Reference>
-    <Reference Include="NetMQ">
-      <HintPath>packages\NetMQ.3.3.2.2\lib\net40\NetMQ.dll</HintPath>
+    <Reference Include="NetMQ, Version=3.3.3.4, Culture=neutral, PublicKeyToken=a6decef4ddc58b3a, processorArchitecture=MSIL">
+      <HintPath>packages\NetMQ.3.3.3.4\lib\net40\NetMQ.dll</HintPath>
+      <Private>True</Private>
     </Reference>
-    <Reference Include="Newtonsoft.Json">
-      <HintPath>packages\Newtonsoft.Json.7.0.1\lib\net40\Newtonsoft.Json.dll</HintPath>
+    <Reference Include="Newtonsoft.Json, Version=9.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
+      <HintPath>packages\Newtonsoft.Json.9.0.1\lib\net45\Newtonsoft.Json.dll</HintPath>
+      <Private>True</Private>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Data" />
@@ -107,18 +115,20 @@
     <Reference Include="System.Web.Services" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Xml" />
-    <Reference Include="Xilium.CefGlue">
-      <HintPath>bin\x86\Release\cefglue\Xilium.CefGlue.dll</HintPath>
-    </Reference>
-    <Reference Include="Xilium.CefGlue.WindowsForms">
-      <HintPath>bin\x86\Release\cefglue\Xilium.CefGlue.WindowsForms.dll</HintPath>
+    <Reference Include="Unosquare.Labs.EmbedIO, Version=1.0.17.23128, Culture=neutral, PublicKeyToken=871377f68111dbd2, processorArchitecture=MSIL">
+      <HintPath>packages\EmbedIO.1.0.24\lib\Unosquare.Labs.EmbedIO.dll</HintPath>
+      <Private>True</Private>
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Action\OverlayLayoutPlayerAction.cs" />
+    <Compile Include="Action\LayoutChangePlayerAction.cs" />
     <Compile Include="Action\PlayerAction.cs" />
-    <Compile Include="Control\XiboCefWebBrowser.cs">
-      <SubType>Component</SubType>
-    </Compile>
+    <Compile Include="Action\PlayerActionInterface.cs" />
+    <Compile Include="Action\RevertToSchedulePlayerAction.cs" />
+    <Compile Include="Control\EmbeddedServer.cs" />
+    <Compile Include="Control\WatchDogManager.cs" />
+    <Compile Include="Error\DefaultLayoutException.cs" />
     <Compile Include="Forms\About.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -132,12 +142,16 @@
     <Compile Include="Action\ScheduleCommand.cs" />
     <Compile Include="Logic\KeyInterceptor.cs" />
     <Compile Include="Logic\KeyStore.cs" />
+    <Compile Include="Logic\ScheduleItem.cs" />
     <Compile Include="Logic\MouseInterceptor.cs" />
     <Compile Include="Logic\OpenSslInterop.cs" />
     <Compile Include="Logic\RegionOptions.cs" />
     <Compile Include="Logic\ApplicationSettings.cs" />
     <Compile Include="Logic\ScreenShot.cs" />
     <Compile Include="Action\XmrSubscriber.cs" />
+    <Compile Include="Media\Audio.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="Media\IeWebMedia.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -242,16 +256,12 @@
       <DesignTime>True</DesignTime>
       <DependentUpon>Reference.map</DependentUpon>
     </Compile>
-    <Compile Include="Media\CefWebMedia.cs">
-      <SubType>Form</SubType>
-    </Compile>
     <Compile Include="Log\XiboTraceListener.cs" />
     <Compile Include="XmdsAgents\LogAgent.cs" />
     <Compile Include="XmdsAgents\RegisterAgent.cs" />
     <Compile Include="XmdsAgents\FileAgent.cs" />
     <Compile Include="XmdsAgents\LibraryAgent.cs" />
-    <Compile Include="XmdsAgents\RequiredFilesAgent.cs" />
-    <Compile Include="XmdsAgents\ScheduleAgent.cs" />
+    <Compile Include="XmdsAgents\ScheduleAndFilesAgent.cs" />
   </ItemGroup>
   <ItemGroup>
     <BootstrapperPackage Include="Microsoft.Net.Client.3.5">
@@ -324,7 +334,10 @@
     <Content Include="new-icon.ico" />
   </ItemGroup>
   <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
-  <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
+  <PropertyGroup>
+    <PostBuildEvent>echo F|xcopy /Y "$(TargetPath)" "$(TargetDir)\Xibo.scr"</PostBuildEvent>
+  </PropertyGroup>
+  <!-- To modify your build process, add your task inside one of the targets below and uncomment it.
        Other similar extension points exist, see Microsoft.Common.targets.
   <Target Name="BeforeBuild">
   </Target>

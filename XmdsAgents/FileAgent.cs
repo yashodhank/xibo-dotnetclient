@@ -123,7 +123,7 @@ namespace XiboClient.XmdsAgents
         /// </summary>
         public void Run()
         {
-            Trace.WriteLine(new LogMessage("FileAgent - Run", "Thread Started"), LogType.Info.ToString());
+            Trace.WriteLine(new LogMessage("FileAgent - Run", "Thread Started"), LogType.Audit.ToString());
 
             // Get the required file id from the list of required files.
             RequiredFile file = _requiredFiles.GetRequiredFile(_requiredFileId, _requiredFileType);
@@ -136,7 +136,7 @@ namespace XiboClient.XmdsAgents
 
             try
             {
-                Trace.WriteLine(new LogMessage("FileAgent - Run", "Thread alive and Lock Obtained"), LogType.Info.ToString());
+                Trace.WriteLine(new LogMessage("FileAgent - Run", "Thread alive and Lock Obtained"), LogType.Audit.ToString());
 
                 if (file.FileType == "resource")
                 {
@@ -150,10 +150,13 @@ namespace XiboClient.XmdsAgents
                         string result = xmds.GetResource(ApplicationSettings.Default.ServerKey, ApplicationSettings.Default.HardwareKey, file.LayoutId, file.RegionId, file.MediaId);
 
                         // Write the result to disk
-                        using (StreamWriter sw = new StreamWriter(File.Open(ApplicationSettings.Default.LibraryPath + @"\" + file.SaveAs, FileMode.Create, FileAccess.Write, FileShare.Read)))
+                        using (FileStream fileStream = File.Open(ApplicationSettings.Default.LibraryPath + @"\" + file.SaveAs, FileMode.Create, FileAccess.Write, FileShare.Read))
                         {
-                            sw.Write(result);
-                            sw.Close();
+                            using (StreamWriter sw = new StreamWriter(fileStream))
+                            {
+                                sw.Write(result);
+                                sw.Close();
+                            }
                         }
 
                         // File completed
@@ -161,7 +164,7 @@ namespace XiboClient.XmdsAgents
                         file.Complete = true;
                     }
                 }
-                else if (file.FileType == "media" && file.Http)
+                else if (file.Http)
                 {
                     // Download using HTTP and the rf.Path
                     using (WebClient wc = new WebClient())
@@ -187,7 +190,7 @@ namespace XiboClient.XmdsAgents
                     else
                     {
                         // Just error - we will pick it up again the next time we download
-                        Trace.WriteLine(new LogMessage("FileAgent - Run", "Downloaded file failed MD5 check. Calculated [" + md5 + "] & XMDS [ " + file.Md5 + "] . " + file.SaveAs), LogType.Error.ToString());
+                        Trace.WriteLine(new LogMessage("FileAgent - Run", "Downloaded file failed MD5 check. Calculated [" + md5 + "] & XMDS [ " + file.Md5 + "] . " + file.SaveAs), LogType.Info.ToString());
                     }
                 }
                 else
@@ -216,10 +219,13 @@ namespace XiboClient.XmdsAgents
                             string layoutXml = Encoding.UTF8.GetString(getFileReturn);
 
                             // Full file is downloaded
-                            using (StreamWriter sw = new StreamWriter(File.Open(ApplicationSettings.Default.LibraryPath + @"\" + file.SaveAs, FileMode.Create, FileAccess.Write, FileShare.Read)))
+                            using (FileStream fileStream = File.Open(ApplicationSettings.Default.LibraryPath + @"\" + file.SaveAs, FileMode.Create, FileAccess.Write, FileShare.Read))
                             {
-                                sw.Write(layoutXml);
-                                sw.Close();
+                                using (StreamWriter sw = new StreamWriter(fileStream))
+                                {
+                                    sw.Write(layoutXml);
+                                    sw.Close();
+                                }
                             }
 
                             file.Complete = true;
@@ -280,15 +286,29 @@ namespace XiboClient.XmdsAgents
                     else
                     {
                         // Just error - we will pick it up again the next time we download
-                        Trace.WriteLine(new LogMessage("FileAgent - Run", "Downloaded file failed MD5 check. Calculated [" + md5 + "] & XMDS [ " + file.Md5 + "] . " + file.SaveAs), LogType.Error.ToString());
+                        Trace.WriteLine(new LogMessage("FileAgent - Run", "Downloaded file failed MD5 check. Calculated [" + md5 + "] & XMDS [ " + file.Md5 + "] . " + file.SaveAs), LogType.Info.ToString());
                     }
                 }
 
                 // Inform the Player thread that a file has been modified.
                 OnComplete(file.Id, file.FileType);
             }
+            catch (WebException webEx)
+            {
+                // Remove from the cache manager
+                _requiredFiles.CurrentCacheManager.Remove(file.SaveAs);
+
+                // Log this message, but dont abort the thread
+                Trace.WriteLine(new LogMessage("FileAgent - Run", "Web Exception in Run: " + webEx.Message), LogType.Info.ToString());
+
+                // Mark as not downloading
+                file.Downloading = false;
+            }
             catch (Exception ex)
             {
+                // Remove from the cache manager
+                _requiredFiles.CurrentCacheManager.Remove(file.SaveAs);
+
                 // Log this message, but dont abort the thread
                 Trace.WriteLine(new LogMessage("FileAgent - Run", "Exception in Run: " + ex.Message), LogType.Error.ToString());
 
@@ -297,7 +317,7 @@ namespace XiboClient.XmdsAgents
             }
 
             // Release the Semaphore
-            Trace.WriteLine(new LogMessage("FileAgent - Run", "Releasing Lock"), LogType.Info.ToString());
+            Trace.WriteLine(new LogMessage("FileAgent - Run", "Releasing Lock"), LogType.Audit.ToString());
 
             _fileDownloadLimit.Release();
         }

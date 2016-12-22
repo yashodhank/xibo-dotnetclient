@@ -1,6 +1,6 @@
 /*
  * Xibo - Digitial Signage - http://www.xibo.org.uk
- * Copyright (C) 2006 - 2012 Daniel Garner
+ * Copyright (C) 2006 - 2016 Daniel Garner
  *
  * This file is part of Xibo.
  *
@@ -91,10 +91,18 @@ namespace XiboClient.XmdsAgents
 
                         // Only do something if enabled
                         if (!ApplicationSettings.Default.EnableExpiredFileDeletion)
+                        {
+                            Trace.WriteLine(new LogMessage("LibraryAgent - Run", "Expired File Deletion Disabled"), LogType.Audit.ToString());
                             return;
+                        }
+
+                        // Test Date
+                        DateTime testDate = DateTime.Now.AddDays(ApplicationSettings.Default.LibraryAgentInterval * -1);
 
                         // Get required files from disk
                         _requiredFiles = RequiredFiles.LoadFromDisk();
+
+                        Trace.WriteLine(new LogMessage("LibraryAgent - Run", "Number of required files = " + _requiredFiles.RequiredFileList.Count), LogType.Audit.ToString());
 
                         // Build a list of files in the library
                         DirectoryInfo directory = new DirectoryInfo(ApplicationSettings.Default.LibraryPath);
@@ -103,7 +111,11 @@ namespace XiboClient.XmdsAgents
                         foreach (FileInfo fileInfo in directory.GetFiles())
                         {
                             // Never delete certain system files
-                            if (_persistentFiles.Contains(fileInfo.Name))
+                            // Also do not delete log/stat files as they are managed by their respective agents
+                            if (_persistentFiles.Contains(fileInfo.Name) || 
+                                fileInfo.Name.Contains(ApplicationSettings.Default.LogLocation) || 
+                                fileInfo.Name.Contains(ApplicationSettings.Default.StatsLogFile)
+                                )
                                 continue;
 
                             // Delete files that were accessed over N days ago
@@ -113,8 +125,11 @@ namespace XiboClient.XmdsAgents
                             }
                             catch
                             {
+                                // It is a bad idea to log in here - it can cause a build up of log files.
+                                //Debug.WriteLine(new LogMessage("LibraryAgent - Run", fileInfo.Name + " is not in Required Files, testing last accessed date [" + fileInfo.LastAccessTime + "] is earlier than " + testDate), LogType.Audit.ToString());
+
                                 // Not a required file
-                                if (fileInfo.LastAccessTime < DateTime.Now.AddDays(ApplicationSettings.Default.LibraryAgentInterval * -1))
+                                if (fileInfo.LastAccessTime < testDate)
                                 {
                                     Trace.WriteLine(new LogMessage("LibraryAgent - Run", "Deleting old file: " + fileInfo.Name), LogType.Info.ToString());
                                     File.Delete(fileInfo.FullName);
@@ -129,8 +144,8 @@ namespace XiboClient.XmdsAgents
                     }
                 }
 
-                // Sleep this thread for 5 minutes
-                _manualReset.WaitOne(900 * 1000);
+                // Sleep this thread for 15 minutes
+                _manualReset.WaitOne(2700 * 1000);
             }
 
             Trace.WriteLine(new LogMessage("LibraryAgent - Run", "Thread Stopped"), LogType.Info.ToString());

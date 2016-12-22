@@ -23,6 +23,7 @@ using System.Runtime.InteropServices;
 using System.Management;
 using System.Text;
 using System.Diagnostics;
+using System.Net.NetworkInformation;
 using System.Security.Cryptography;
 using System.Windows.Forms;
 using Org.BouncyCastle.Security;
@@ -71,6 +72,9 @@ namespace XiboClient
         {
             Debug.WriteLine("[IN]", "HardwareKey");
 
+            // Get the Mac Address
+            _macAddress = GetMacAddress();
+
             // Get the key from the Settings
             _hardwareKey = ApplicationSettings.Default.HardwareKey;
 
@@ -79,8 +83,10 @@ namespace XiboClient
             {
                 try
                 {
+                    string systemDriveLetter = Path.GetPathRoot(Environment.SystemDirectory);
+
                     // Calculate the Hardware key from the CPUID and Volume Serial
-                    _hardwareKey = Hashes.MD5(GetCPUId() + GetVolumeSerial("C"));
+                    _hardwareKey = Hashes.MD5(GetCPUId() + GetVolumeSerial(systemDriveLetter[0].ToString()) + _macAddress);
                 }
                 catch
                 {
@@ -90,9 +96,6 @@ namespace XiboClient
                 // Store the key
                 ApplicationSettings.Default.HardwareKey = _hardwareKey;
             }
-
-            // Get the Mac Address
-            _macAddress = GetMACAddress();
 
             Debug.WriteLine("[OUT]", "HardwareKey");
         }
@@ -146,28 +149,30 @@ namespace XiboClient
         }
 
         /// <summary>
-        /// Returns MAC Address from first Network Card in Computer
+        /// Finds the MAC address of the first operation NIC found.
         /// </summary>
-        /// <returns>[string] MAC Address</returns>
-        public string GetMACAddress()
+        /// <returns>The MAC address.</returns>
+        private string GetMacAddress()
         {
-            lock (_locker)
+            string macAddresses = string.Empty;
+
+            try
             {
-                ManagementClass mc = new ManagementClass("Win32_NetworkAdapterConfiguration");
-                ManagementObjectCollection moc = mc.GetInstances();
-                string MACAddress = String.Empty;
-
-                foreach (ManagementObject mo in moc)
+                foreach (NetworkInterface nic in NetworkInterface.GetAllNetworkInterfaces())
                 {
-                    if (MACAddress == String.Empty)  // only return MAC Address from first card
+                    if (nic.OperationalStatus == OperationalStatus.Up)
                     {
-                        if ((bool)mo["IPEnabled"] == true) MACAddress = mo["MacAddress"].ToString();
+                        macAddresses += BitConverter.ToString(nic.GetPhysicalAddress().GetAddressBytes()).Replace('-', ':');
+                        break;
                     }
-                    mo.Dispose();
                 }
-
-                return MACAddress;
             }
+            catch
+            {
+                macAddresses = "00:00:00:00:00:00";
+            }
+
+            return macAddresses;
         }
 
         /// <summary>
@@ -207,7 +212,7 @@ namespace XiboClient
             const int PROVIDER_RSA_FULL = 1;
             CspParameters cspParams;
             cspParams = new CspParameters(PROVIDER_RSA_FULL);
-            cspParams.KeyContainerName = Application.ProductName + "RsaKey";
+            cspParams.KeyContainerName = Application.ProductName + "-" + Environment.UserName + "-" + "RsaKey";
             cspParams.Flags = CspProviderFlags.UseMachineKeyStore;
             cspParams.ProviderName = "Microsoft Strong Cryptographic Provider";
 
@@ -221,15 +226,23 @@ namespace XiboClient
 
         public string getXmrPublicKey()
         {
-            AsymmetricCipherKeyPair key = getXmrKey();
-
-            using (TextWriter textWriter = new StringWriter())
+            try
             {
-                PemWriter writer = new PemWriter(textWriter);
-                writer.WriteObject(key.Public);
-                writer.Writer.Flush();
+                AsymmetricCipherKeyPair key = getXmrKey();
 
-                return textWriter.ToString();                
+                using (TextWriter textWriter = new StringWriter())
+                {
+                    PemWriter writer = new PemWriter(textWriter);
+                    writer.WriteObject(key.Public);
+                    writer.Writer.Flush();
+
+                    return textWriter.ToString();
+                }
+            }
+            catch (Exception e)
+            {
+                Trace.WriteLine(new LogMessage("HardwareKey - getXmrPublicKey", "Unable to get XMR public key. E = " + e.Message), LogType.Error.ToString());
+                return null;
             }
         }
     }

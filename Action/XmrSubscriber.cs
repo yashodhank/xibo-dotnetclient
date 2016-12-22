@@ -26,8 +26,8 @@ namespace XiboClient.Logic
         public DateTime LastHeartBeat = DateTime.MinValue;
 
         // Events
-        public delegate void OnCollectNowActionDelegate();
-        public event OnCollectNowActionDelegate OnCollectNowAction;
+        public delegate void OnActionDelegate(PlayerActionInterface action);
+        public event OnActionDelegate OnAction;
 
         /// <summary>
         /// Client Hardware key
@@ -127,7 +127,25 @@ namespace XiboClient.Logic
                                             break;
 
                                         case "collectNow":
-                                            OnCollectNowAction();
+                                        case RevertToSchedulePlayerAction.Name:
+                                            if (OnAction != null)
+                                                OnAction(action);
+                                            break;
+
+                                        case LayoutChangePlayerAction.Name:
+
+                                            LayoutChangePlayerAction changeLayout = JsonConvert.DeserializeObject<LayoutChangePlayerAction>(opened);
+
+                                            if (OnAction != null)
+                                                OnAction(changeLayout);
+
+                                            break;
+
+                                        case OverlayLayoutPlayerAction.Name:
+                                            OverlayLayoutPlayerAction overlayLayout = JsonConvert.DeserializeObject<OverlayLayoutPlayerAction>(opened);
+                                            
+                                            if (OnAction != null)
+                                                OnAction(overlayLayout);
                                             break;
 
                                         case "screenShot":
@@ -157,7 +175,7 @@ namespace XiboClient.Logic
             }
             catch (Exception e)
             {
-                Trace.WriteLine(new LogMessage("XmrSubscriber - Run", "Unable to Subscribe to XMR: " + e.Message), LogType.Error.ToString());
+                Trace.WriteLine(new LogMessage("XmrSubscriber - Run", "Unable to Subscribe to XMR: " + e.Message), LogType.Info.ToString());
                 _clientInfoForm.XmrSubscriberStatus = e.Message;
             }
         }
